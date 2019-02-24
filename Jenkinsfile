@@ -1,7 +1,7 @@
 @Library('jenkins-shared-libraries') _
 
-def SERVER_ID  = 'carlspring-oss-snapshots'
-def DEPLOY_SERVER_URL = 'https://repo.carlspring.org/content/repositories/carlspring-oss-snapshots/'
+def SERVER_ID  = 'carlspring'
+def RELEASE_SERVER_URL = 'https://repo.carlspring.org/content/repositories/carlspring-oss-releases/'
 def PR_SERVER_URL = 'https://repo.carlspring.org/content/repositories/carlspring-oss-pull-requests/'
 
 // Notification settings for "master" and "branch/pr"
@@ -46,19 +46,46 @@ pipeline {
             when {
                 expression {
                     (currentBuild.result == null || currentBuild.result == 'SUCCESS') && 
-                    (BRANCH_NAME == 'master' ||
-                     env.VERSION.contains("PR-${env.CHANGE_ID}") ||
-                     env.VERSION.contains(BRANCH_NAME))
+                    (
+                        BRANCH_NAME == 'master' && input message: 'Should I release and deploy this version?',
+                                                         parameters: [
+                                                            booleanParam(
+                                                                defaultValue: false,
+                                                                description: '',
+                                                                name: 'APPROVE_RELEASE'
+                                                            )
+                                                         ],
+                                                         submitter: 'administrators,strongbox,strongbox-pro',
+                                                         submitterParameter: 'APPROVED_BY'
+                    ) ||
+                    env.VERSION.contains("PR-${env.CHANGE_ID}") ||
+                    env.VERSION.contains(BRANCH_NAME)
                 }
             }
             steps {
                 script {
                     withMavenPlus(mavenLocalRepo: workspace().getM2LocalRepoPath(), mavenSettingsConfig: 'a5452263-40e5-4d71-a5aa-4fc94a0e6833') {
-                        def SERVER_URL = DEPLOY_SERVER_URL;
-                        def VERSION_ID = env.VERSION;
+                        def SERVER_URL
 
                         if (BRANCH_NAME == 'master') {
-                            echo "Deploying master"
+                            echo "Preparing release..."
+
+                            sh "mvn -B release:clean release:prepare"
+
+                            def releaseProperties = readProperties(file: "release.properties");
+                            env.VERSION = releaseProperties["scm.tag"]
+
+                            echo env.VERSION
+                            echo releaseProperties
+
+                            error("on purpose.")
+
+                            sh "git push --follow-tags"
+
+
+                            echo "Deploying " + env.VERSION
+
+                            SERVER_URL = RELEASE_SERVER_URL
 
                             sh "mvn deploy" +
                                " -DskipTests" +
